@@ -1,0 +1,57 @@
+name: CI — Durion Track
+
+# Scoped to this track only — a change under tracks/baseline/, tracks/speckit/, etc.
+# never triggers this workflow, and this one never triggers theirs.
+on:
+  push:
+    paths:
+      - "tracks/durion/**"
+  pull_request:
+    paths:
+      - "tracks/durion/**"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [companies-service, contacts-service, opportunities-service]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: "temurin"
+          cache: maven
+
+      - name: Build and test ${{ matrix.service }}
+        working-directory: tracks/durion/services/${{ matrix.service }}
+        run: mvn -B verify
+
+  compose-smoke-test:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Local/on-demand deployment only, per the project's CI/CD decision —
+      # this brings the stack up for verification, nothing is pushed to a public target.
+      - name: Bring up the full stack
+        working-directory: tracks/durion
+        run: docker compose up -d --build
+
+      - name: Wait for the gateway to report healthy
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8080/actuator/health && exit 0
+            sleep 5
+          done
+          echo "Gateway never became healthy" >&2
+          exit 1
+
+      - name: Tear down
+        if: always()
+        working-directory: tracks/durion
+        run: docker compose down -v
