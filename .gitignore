@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Java / Maven (for when service code lands)
+target/
+*.class
+
+# Node / Angular (for when frontend code lands)
+node_modules/
+dist/
