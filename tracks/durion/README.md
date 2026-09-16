@@ -20,6 +20,8 @@ durion/
 └── docker-compose.yml      — services + Postgres x3 + Kafka + gateway, local only
 ```
 
+Start here: [`AGENTS.md`](AGENTS.md) is the working agreement for any session doing implementation on this track, and [`docs/adr/`](docs/adr/) holds the binding architecture decisions made so far.
+
 ## Status
 
-Not started. See [`/results/comparison.md`](../../results/comparison.md) for this track's numbers once it's underway.
+In progress — governance docs and ADR-0001 (service boundaries and conventions) are in place. Service and frontend code not yet started; see the `track:durion` labeled issues in this repo for what's next (`INFRA-1` through `INFRA-8`, then `REQ-1` through `REQ-14`). See [`/results/comparison.md`](../../results/comparison.md) for this track's numbers once measurement begins.
