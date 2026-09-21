@@ -11,10 +11,11 @@ spring:
   jpa:
     open-in-view: false
     hibernate:
-      # No entities yet (INFRA-1). Schema management strategy (Flyway vs.
-      # Hibernate auto-ddl) is a decision for when REQ-1 introduces the
-      # Company entity, not this scaffolding issue.
-      ddl-auto: none
+      # Flyway (db/migration) owns the schema; Hibernate only checks the
+      # entity mappings match it at startup, never generates DDL itself.
+      ddl-auto: validate
+  flyway:
+    locations: classpath:db/migration
 
 management:
   endpoints:

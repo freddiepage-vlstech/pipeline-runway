@@ -1,0 +1,14 @@
+# Overrides src/main/resources/application.yml for the test classpath.
+# H2 in Postgres-compatibility mode, not a real Postgres — see the h2
+# dependency's comment in pom.xml for why.
+spring:
+  datasource:
+    url: jdbc:h2:mem:companies_test;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    locations: classpath:db/migration
