@@ -1,11 +1,14 @@
 package tech.vlstech.durion.companies.web;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -34,6 +37,7 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/companies")
+@Validated
 public class CompanyController {
 
     private final CompanyService service;
@@ -46,8 +50,8 @@ public class CompanyController {
     public CompanyPageDto listCompanies(
             @RequestParam(required = false) String search,
             @RequestParam(name = "includeInactive", defaultValue = "false") boolean includeInactive,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int size
+            @RequestParam(defaultValue = "0") @Min(0) int page,
+            @RequestParam(defaultValue = "50") @Min(1) @Max(200) int size
     ) {
         Pageable pageable = PageRequest.of(page, size, Sort.by("name"));
         return CompanyPageDto.from(service.list(search, includeInactive, pageable));

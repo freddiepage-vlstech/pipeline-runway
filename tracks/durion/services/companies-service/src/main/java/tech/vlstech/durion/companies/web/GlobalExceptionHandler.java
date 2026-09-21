@@ -1,5 +1,7 @@
 package tech.vlstech.durion.companies.web;
 
+import jakarta.validation.ConstraintViolationException;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -29,6 +31,18 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleValidation(MethodArgumentNotValidException ex) {
         var fieldErrors = ex.getBindingResult().getFieldErrors().stream()
                 .map(fe -> new ErrorResponse.FieldError(fe.getField(), fe.getDefaultMessage()))
+                .toList();
+        var body = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), "VALIDATION_FAILED",
+                "Request validation failed", fieldErrors);
+        return ResponseEntity.badRequest().body(body);
+    }
+
+    /** Request-shape validation on @RequestParam/@PathVariable constraints (e.g. page/size), not a request body. */
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<ErrorResponse> handleConstraintViolation(ConstraintViolationException ex) {
+        var fieldErrors = ex.getConstraintViolations().stream()
+                .map(cv -> new ErrorResponse.FieldError(
+                        cv.getPropertyPath().toString(), cv.getMessage()))
                 .toList();
         var body = new ErrorResponse(HttpStatus.BAD_REQUEST.value(), "VALIDATION_FAILED",
                 "Request validation failed", fieldErrors);
