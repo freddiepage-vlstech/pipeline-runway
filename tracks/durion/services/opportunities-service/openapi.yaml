@@ -1,0 +1,492 @@
+openapi: 3.0.3
+info:
+  title: Opportunities Service API
+  version: "1.0.0"
+  description: >
+    Owns the Opportunity aggregate, its pipeline stages, and its automation
+    triggers (REQ-3 through REQ-11). Contract-first source for
+    `opportunities-service` — see companies-service/openapi.yaml's
+    description for the ADR-0004 regeneration/drift-check note.
+
+    This service also consumes `company.events.v1` and `contact.events.v1`
+    to maintain read-only replicas (`ext_companies_company`,
+    `ext_contacts_person`, ADR-0001) and reacts to Company deactivation by
+    setting `companyInactive` on affected Opportunities (ADR-0005). None of
+    that replica/consumer machinery is part of this REST contract — it's
+    internal to this service.
+
+    Stage modeling and the stale threshold — both of which REQ-6 and
+    REQ-10 explicitly require to be documented in an ADR — are decided in
+    ADR-0006 and ADR-0007 respectively:
+
+    - REQ-6 (configurable stages, ADR-0006): modeled as a Stage resource
+      with `isClosedWon`/`isClosedLost` boolean flags, so REQ-9's
+      automation triggers off a flag rather than a hardcoded stage name
+      and survives a stage rename.
+    - REQ-10 (stale threshold, ADR-0007): modeled as a per-deployment
+      configurable integer (`STALE_THRESHOLD_DAYS`, default 14, matching
+      REQ-10's stated default), exposed read-only here.
+
+servers:
+  - url: /api/opportunities
+    description: Routed through the gateway (INFRA-4).
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: opportunities
+  - name: stages
+
+paths:
+  /opportunities:
+    get:
+      operationId: listOpportunities
+      tags: [opportunities]
+      summary: List opportunities (REQ-5 table view, REQ-4 kanban view)
+      parameters:
+        - name: stageId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: companyId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: stale
+          in: query
+          description: Filter to only stale (REQ-10) or only non-stale opportunities.
+          schema: { type: boolean }
+        - name: sort
+          in: query
+          description: "Any field on Opportunity, e.g. `amount`, `-expectedCloseDate` (leading `-` = descending). REQ-5."
+          schema: { type: string }
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+      responses:
+        '200':
+          description: A page of opportunities.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpportunityPage' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      operationId: createOpportunity
+      tags: [opportunities]
+      summary: Create an opportunity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OpportunityCreateRequest' }
+      responses:
+        '201':
+          description: Opportunity created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Opportunity' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422':
+          description: >
+            Domain-policy refusal — e.g. negative amount, or companyId
+            doesn't resolve against the ext_companies_company replica
+            (ADR-0002: not an identity/version/lifecycle collision, so 422
+            not 409).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /opportunities/summary:
+    get:
+      operationId: getOpportunitySummary
+      tags: [opportunities]
+      summary: Per-stage and total pipeline value rollup (REQ-7)
+      responses:
+        '200':
+          description: Rollup of open-pipeline value.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpportunitySummary' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /opportunities/{opportunityId}:
+    parameters:
+      - name: opportunityId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getOpportunity
+      tags: [opportunities]
+      summary: Get an opportunity's full detail (REQ-11 record page)
+      description: >
+        Includes the fields REQ-11 asks for: all Opportunity fields, its
+        related Company and Person (summarized, fetched from this service's
+        own replicas — never a live call to companies-service/contacts-service,
+        per ADR-0001), and a pointer to the stage-history endpoint below for
+        the audit trail.
+      responses:
+        '200':
+          description: The opportunity, with related-record summaries.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpportunityDetail' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      operationId: updateOpportunity
+      tags: [opportunities]
+      summary: Update an opportunity, including moving its stage
+      description: >
+        Moving `stageId` to a stage where `isClosedWon` is true publishes
+        `opportunity.closed_won` on the topic INFRA-6 defines (REQ-9). Once
+        an opportunity is in a stage with `isClosedWon` or `isClosedLost`
+        true, further stage changes are rejected with 409 — this is
+        ADR-0002's own worked example ("editing an Opportunity that's
+        already Closed Won") made concrete.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OpportunityUpdateRequest' }
+      responses:
+        '200':
+          description: Updated opportunity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Opportunity' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The opportunity's current stage is closed (won or lost) and its stage cannot be changed further (ADR-0002).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/UnprocessableEntity' }
+    delete:
+      operationId: deleteOpportunity
+      tags: [opportunities]
+      summary: Delete an opportunity
+      description: >
+        Real (hard) delete — unlike Company/Contact, nothing else in this
+        system holds a reference to an Opportunity, so ADR-0005's
+        soft-delete rationale (protecting dependents from a dangling
+        reference) doesn't apply here.
+      responses:
+        '204':
+          description: Opportunity deleted.
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /opportunities/{opportunityId}/stage-history:
+    parameters:
+      - name: opportunityId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getOpportunityStageHistory
+      tags: [opportunities]
+      summary: Stage-change audit trail (REQ-11, REQ-8)
+      responses:
+        '200':
+          description: Ordered list of stage transitions, oldest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/StageHistoryEntry' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /stages:
+    get:
+      operationId: listStages
+      tags: [stages]
+      summary: List pipeline stages, in display order (REQ-6)
+      responses:
+        '200':
+          description: Ordered stages.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Stage' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      operationId: createStage
+      tags: [stages]
+      summary: Define a new stage (REQ-6, admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StageCreateRequest' }
+      responses:
+        '201':
+          description: Stage created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Stage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /stages/{stageId}:
+    parameters:
+      - name: stageId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      operationId: updateStage
+      tags: [stages]
+      summary: Rename or reconfigure a stage (REQ-6, admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StageUpdateRequest' }
+      responses:
+        '200':
+          description: Updated stage.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Stage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /stages/reorder:
+    post:
+      operationId: reorderStages
+      tags: [stages]
+      summary: Reorder stages (REQ-6, admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [orderedStageIds]
+              properties:
+                orderedStageIds:
+                  type: array
+                  items: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Stages in their new order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Stage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Single shared token per REQ-13.
+
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+    SizeParam:
+      name: size
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+
+  schemas:
+    Stage:
+      type: object
+      required: [id, name, order, isClosedWon, isClosedLost]
+      properties:
+        id: { type: string, format: uuid, readOnly: true }
+        name: { type: string, minLength: 1, maxLength: 100 }
+        order: { type: integer, description: "0-based display/kanban-column order." }
+        isClosedWon:
+          type: boolean
+          description: "Drives REQ-9's automation. Exactly one stage should normally have this true."
+        isClosedLost:
+          type: boolean
+          description: "Marks the stage as terminal, same as isClosedWon, without triggering REQ-9's event."
+
+    StageCreateRequest:
+      type: object
+      required: [name, order]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        order: { type: integer }
+        isClosedWon: { type: boolean, default: false }
+        isClosedLost: { type: boolean, default: false }
+
+    StageUpdateRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        isClosedWon: { type: boolean }
+        isClosedLost: { type: boolean }
+
+    Opportunity:
+      type: object
+      required: [id, name, companyId, stageId, amount, companyInactive, stale, currentStageEnteredAt, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid, readOnly: true }
+        name: { type: string, minLength: 1, maxLength: 255 }
+        companyId:
+          type: string
+          format: uuid
+          description: Opaque reference to a Company in companies-service. Required (REQ-3).
+        personId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Opaque reference to a Contact in contacts-service. Optional (REQ-3).
+        stageId: { type: string, format: uuid }
+        amount:
+          type: number
+          format: double
+          minimum: 0
+          description: Currency amount. Negative values are a 422 (ADR-0002's own worked example).
+        expectedCloseDate: { type: string, format: date, nullable: true }
+        currentStageEnteredAt:
+          type: string
+          format: date-time
+          readOnly: true
+          description: Timestamp the opportunity entered its current stage (REQ-8).
+        companyInactive:
+          type: boolean
+          readOnly: true
+          description: Set/cleared by this service reacting to company.deactivated/reactivated events (ADR-0005). Never written directly.
+        stale:
+          type: boolean
+          readOnly: true
+          description: True when not moved/updated within the configurable threshold (REQ-10; default 14 days, ADR-0007).
+        createdAt: { type: string, format: date-time, readOnly: true }
+        updatedAt: { type: string, format: date-time, readOnly: true }
+
+    OpportunityDetail:
+      allOf:
+        - $ref: '#/components/schemas/Opportunity'
+        - type: object
+          properties:
+            company:
+              $ref: '#/components/schemas/RelatedRecordSummary'
+            person:
+              allOf:
+                - $ref: '#/components/schemas/RelatedRecordSummary'
+              nullable: true
+
+    RelatedRecordSummary:
+      type: object
+      description: >
+        Read from this service's own local replica (ADR-0001) — never a
+        live call to companies-service or contacts-service.
+      required: [id, displayName]
+      properties:
+        id: { type: string, format: uuid }
+        displayName: { type: string }
+
+    OpportunityCreateRequest:
+      type: object
+      required: [name, companyId, stageId, amount]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        companyId: { type: string, format: uuid }
+        personId: { type: string, format: uuid, nullable: true }
+        stageId: { type: string, format: uuid }
+        amount: { type: number, format: double, minimum: 0 }
+        expectedCloseDate: { type: string, format: date, nullable: true }
+
+    OpportunityUpdateRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 255 }
+        personId: { type: string, format: uuid, nullable: true }
+        stageId: { type: string, format: uuid }
+        amount: { type: number, format: double, minimum: 0 }
+        expectedCloseDate: { type: string, format: date, nullable: true }
+
+    OpportunityPage:
+      type: object
+      required: [items, page, size, totalElements, totalPages]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Opportunity' }
+        page: { type: integer }
+        size: { type: integer }
+        totalElements: { type: integer }
+        totalPages: { type: integer }
+
+    OpportunitySummary:
+      type: object
+      required: [byStage, totalOpenValue]
+      properties:
+        byStage:
+          type: array
+          items:
+            type: object
+            required: [stageId, stageName, totalAmount, count]
+            properties:
+              stageId: { type: string, format: uuid }
+              stageName: { type: string }
+              totalAmount: { type: number, format: double }
+              count: { type: integer }
+        totalOpenValue:
+          type: number
+          format: double
+          description: Sum of amount across every open (non-closed) stage.
+
+    StageHistoryEntry:
+      type: object
+      required: [stageId, stageName, enteredAt]
+      properties:
+        stageId: { type: string, format: uuid }
+        stageName: { type: string }
+        enteredAt: { type: string, format: date-time }
+        exitedAt: { type: string, format: date-time, nullable: true }
+
+    Error:
+      type: object
+      required: [status, code, message]
+      properties:
+        status: { type: integer }
+        code:
+          type: string
+          description: "e.g. OPPORTUNITY_NOT_FOUND, OPPORTUNITY_STAGE_LOCKED, VALIDATION_FAILED."
+        message: { type: string }
+        fieldErrors:
+          type: array
+          items:
+            type: object
+            required: [field, message]
+            properties:
+              field: { type: string }
+              message: { type: string }
+
+  responses:
+    BadRequest:
+      description: Request-shape validation failure (ADR-0002).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Authorization failure (ADR-0002).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: No opportunity exists with that ID (plain resource-lookup miss, not an ADR-0002 domain refusal).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UnprocessableEntity:
+      description: Domain-policy refusal that isn't an identity/version/lifecycle collision (ADR-0002).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
