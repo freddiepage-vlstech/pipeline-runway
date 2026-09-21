@@ -1,0 +1,30 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: opportunities-service
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:opportunities_db}
+    username: ${DB_USERNAME:opportunities_service}
+    password: ${DB_PASSWORD:changeme}
+  jpa:
+    open-in-view: false
+    hibernate:
+      # No entities yet (INFRA-3). Schema management strategy (Flyway vs.
+      # Hibernate auto-ddl) is a decision for when Opportunity/Stage
+      # entities land, not this scaffolding issue. This will also need to
+      # cover the ext_companies_company / ext_contacts_person replica
+      # tables (ADR-0001) once INFRA-6 wires up their consumers.
+      ddl-auto: none
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true

@@ -1,0 +1,28 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: contacts-service
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:contacts_db}
+    username: ${DB_USERNAME:contacts_service}
+    password: ${DB_PASSWORD:changeme}
+  jpa:
+    open-in-view: false
+    hibernate:
+      # No entities yet (INFRA-2). Schema management strategy (Flyway vs.
+      # Hibernate auto-ddl) is a decision for when REQ-2 introduces the
+      # Contact entity, not this scaffolding issue.
+      ddl-auto: none
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
