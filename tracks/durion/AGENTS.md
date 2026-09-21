@@ -11,6 +11,7 @@ Before writing or changing anything, a session working on this track should:
 3. Read every file under `docs/adr/` in this track, in numeric order. These are binding on this track until superseded by a later ADR — never contradicted by code without a new ADR explaining why.
 4. Check `docs/adr/` for an ADR already covering the area you're about to touch before making an architectural choice. If none exists, write one before or alongside the code (see "When to write an ADR" below).
 5. Check the open issues labeled `track:durion` in GitHub for what's already done vs. still open, and check this track's section of `/results/comparison.md` for known status.
+6. Read the agent file for the area you're about to work in under `agents/` (see "Agent structure" below) — it adds role-specific MAY/MUST ASK/MUST NOT detail on top of this file, it doesn't replace any of the above.
 
 ## Build order
 
@@ -22,6 +23,12 @@ Contract-first, matching Durion Positivity's production pattern:
 4. Wire cross-service concerns (Kafka events, gateway routing) after the services that produce/consume them exist.
 
 Deviating from this order (e.g., writing frontend code against a service that has no contract yet) is itself a form of drift — avoid it, and if it happens, log why in an ADR rather than letting it pass silently.
+
+## Agent structure
+
+Implementation work is split across a two-tier agent structure under `agents/`: an `api-orchestrator` and `ui-orchestrator` coordinate backend and frontend work respectively, each delegating to service- or area-scoped leaf agents, with a `pr-review-orchestrator` as the final gate before merge. See [`agents/README.md`](agents/README.md) for the full structure and why this track keeps an orchestration tier that Durion Positivity's own current production setup has moved away from in favor of a flat per-domain pattern — that choice is deliberate for this benchmark, not a claim that it's the better default at every scale.
+
+None of these agent files override the source-of-truth hierarchy below; they only add role-specific detail on top of it.
 
 ## When to write an ADR
 
