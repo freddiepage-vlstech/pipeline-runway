@@ -30,6 +30,32 @@ jobs:
         working-directory: tracks/durion/services/${{ matrix.service }}
         run: mvn -B verify
 
+  sdk-contract-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # ADR-0004: the Angular SDK is generated, never hand-maintained. This
+      # regenerates from the three services' current openapi.yaml contracts
+      # and fails the build if the result differs from what's committed —
+      # the actual enforcement of "producer and consumer can't silently
+      # drift apart."
+      - name: Regenerate the Angular SDK from the current OpenAPI contracts
+        working-directory: tracks/durion/frontend/sdk
+        run: ./generate.sh
+
+      - name: Fail if regeneration produced a diff (contract/SDK drift)
+        run: |
+          if ! git diff --exit-code -- tracks/durion/frontend/sdk/src; then
+            echo "::error::Generated SDK differs from what's committed. Run tracks/durion/frontend/sdk/generate.sh and commit the result." >&2
+            exit 1
+          fi
+
   compose-smoke-test:
     needs: build-and-test
     runs-on: ubuntu-latest

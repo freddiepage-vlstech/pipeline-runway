@@ -1,0 +1,9 @@
+{
+  "name": "@durion-runway/sdk",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Generated Angular client SDK for the Durion track's three services. Never hand-edit anything under src/ — run generate.sh (ADR-0004).",
+  "scripts": {
+    "generate": "./generate.sh"
+  }
+}
